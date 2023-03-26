@@ -7,6 +7,8 @@ const path = require("path");
 const avatarDir = path.join(__dirname, "../", "public", "avatars");
 const fs = require("fs/promises");
 const Jimp = require("jimp");
+const { nanoid } = require("nanoid");
+const sendEmail = require("../helpers/sendEmail");
 
 const register = async (req, res, next) => {
   try {
@@ -19,18 +21,69 @@ const register = async (req, res, next) => {
 
     const hashPassword = await bcrypt.hash(password, 10);
     const avatarURL = gravatar.url(email);
+    const verificationToken = nanoid();
 
     const newUser = await User.create({
       ...req.body,
       password: hashPassword,
       avatarURL,
+      verificationToken,
     });
+
+    const verifyEmail = {
+      to: email,
+      subject: "Verify email",
+      html: `<a target="_blank" href="http://localhost:3000/api/users/verify/${verificationToken}">Click verufy email</a>`,
+    };
+
+    await sendEmail(verifyEmail);
+
     res
       .status(201)
       .json({ email: newUser.email, subscription: newUser.subscription });
   } catch (error) {
     next(error);
   }
+};
+
+const verifyEmail = async (req, res) => {
+  const { verificationToken } = req.params;
+  const user = await User.findOne({ verificationToken });
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  await User.findByIdAndUpdate(user._id, {
+    verify: true,
+    verificationToken: "",
+  });
+
+  res.status(200).json({ message: "Verification successful" });
+};
+
+const resendVerifyEmail = async (req, res) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  if (user.verify) {
+    return res
+      .status(400)
+      .json({ message: "Verification has already been passed" });
+  }
+
+  const verifyEmail = {
+    to: email,
+    subject: "Verify email",
+    html: `<a target="_blank" href="http://localhost:3000/api/users/verify/${user.$isDefaultverificationToken}">Click verufy email</a>`,
+  };
+
+  await sendEmail(verifyEmail);
+
+  res.status(200).json({ message: "Verification email sent" });
 };
 
 const login = async (req, res, next) => {
@@ -40,7 +93,11 @@ const login = async (req, res, next) => {
     const passwordCompare = bcrypt.compare(password, user.password);
 
     if (!user || !passwordCompare) {
-      return res.status(401).json({ message: "Email or password is wrong" });
+      return res.status(401).json({ message: " oEmailr password is wrong" });
+    }
+
+    if (!user.verify) {
+      return res.status(404).json({ message: "User not found" });
     }
 
     const payload = {
@@ -105,4 +162,6 @@ module.exports = {
   getCurrent,
   logout,
   updateAvatar,
+  verifyEmail,
+  resendVerifyEmail,
 };
